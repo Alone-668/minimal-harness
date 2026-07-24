@@ -45,6 +45,45 @@ SUMMARY_REQUEST = (
 )
 
 
+def _project_history(
+    messages: list[Message],
+    existing_summary: str | None,
+) -> list[dict[str, Any]]:
+    """Project a memory slice into chat messages.
+
+    Re-projects ``role="compaction"`` to ``role="assistant"`` (matches
+    :meth:`Memory.get_forward_messages`). If ``existing_summary`` is
+    provided it is prepended as an assistant turn, mirroring how prior
+    compaction summaries are exposed to the LLM in the agent loop.
+    """
+    chat: list[dict[str, Any]] = []
+    if existing_summary:
+        chat.append({"role": "assistant", "content": existing_summary})
+    for m in messages:
+        role = m.get("role")
+        if role == "compaction":
+            chat.append(
+                {
+                    "role": "assistant",
+                    "content": str(m.get("content", "")),
+                }
+            )
+        else:
+            chat.append(dict(m))
+
+    # Strip tool_calls from any assistant message that does not have
+    # a following tool response — the LLM API rejects dangling calls.
+    for i in range(len(chat) - 1):
+        if chat[i].get("role") == "assistant" and chat[i].get("tool_calls"):
+            if chat[i + 1].get("role") != "tool":
+                chat[i].pop("tool_calls", None)
+    # Also check the very last message
+    if chat and chat[-1].get("role") == "assistant" and chat[-1].get("tool_calls"):
+        chat[-1].pop("tool_calls", None)
+
+    return chat
+
+
 def build_chat_payload(
     system_prompt: str,
     messages: list[Message],
